@@ -72,16 +72,16 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| TEMPORARY OPENSKY DIAGNOSTIC
+| OPENSKY CONNECTIVITY DIAGNOSTIC
 |--------------------------------------------------------------------------
 |
-| This endpoint checks:
-| 1. Whether Render has the client ID
-| 2. Whether Render has the client secret
-| 3. Whether Render can reach the OpenSky OAuth server
-| 4. What HTTP status OpenSky returns
+| Temporary diagnostic endpoint.
 |
-| It NEVER returns the actual client secret or access token.
+| IMPORTANT:
+| - Does NOT expose client_secret.
+| - Does NOT expose OAuth access tokens.
+| - Tests both the OpenSky auth host and API host
+|   from the Render server itself.
 |--------------------------------------------------------------------------
 */
 
@@ -99,120 +99,220 @@ app.get(
           process.env.OPENSKY_CLIENT_SECRET
         ),
 
-      authReachable: false,
+      tests: {
+        authHost: {},
+        apiHost: {}
+      },
 
-      authStatus: null,
-
-      authResponsePreview: null,
-
-      authError: null
+      oauth: {
+        attempted: false,
+        reachable: false,
+        status: null,
+        tokenReceived: false,
+        expiresIn: null,
+        error: null,
+        errorDescription: null,
+        errorMessage: null
+      }
     };
 
-    try {
-      /*
-       * Protect against a missing environment variable.
-       */
-      if (
-        !process.env.OPENSKY_CLIENT_ID ||
-        !process.env.OPENSKY_CLIENT_SECRET
-      ) {
-        result.authError =
-          "OpenSky environment variables are missing";
+    /*
+     * ----------------------------------------------------------
+     * Generic URL connectivity test
+     * ----------------------------------------------------------
+     */
 
-        return res.json(result);
-      }
+    async function testUrl(url) {
+      const started =
+        Date.now();
 
-      /*
-       * OpenSky OAuth2 client-credentials request.
-       */
-      const body =
-        new URLSearchParams({
-          grant_type:
-            "client_credentials",
-
-          client_id:
-            process.env.OPENSKY_CLIENT_ID,
-
-          client_secret:
-            process.env.OPENSKY_CLIENT_SECRET
-        });
-
-      const response =
-        await fetch(
-          "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/x-www-form-urlencoded",
-
-              Accept:
-                "application/json"
-            },
-
-            body:
-              body.toString(),
-
-            signal:
-              AbortSignal.timeout(
-                15_000
-              )
-          }
-        );
-
-      result.authReachable =
-        true;
-
-      result.authStatus =
-        response.status;
-
-      const text =
-        await response.text();
-
-      /*
-       * NEVER return an actual OAuth access token.
-       *
-       * Only return a small diagnostic preview.
-       */
       try {
-        const parsed =
-          JSON.parse(text);
-
-        result.authResponsePreview =
-          {
-            tokenReceived:
-              Boolean(
-                parsed.access_token
-              ),
-
-            expiresIn:
-              parsed.expires_in ??
-              null,
-
-            tokenType:
-              parsed.token_type ??
-              null,
-
-            error:
-              parsed.error ??
-              null,
-
-            errorDescription:
-              parsed.error_description ??
-              null
-          };
-      } catch {
-        result.authResponsePreview =
-          text.slice(
-            0,
-            300
+        const response =
+          await fetch(
+            url,
+            {
+              method: "GET",
+              signal:
+                AbortSignal.timeout(
+                  15_000
+                ),
+              headers: {
+                "User-Agent":
+                  "WorldView-Godseye/1.0",
+                Accept:
+                  "application/json"
+              }
+            }
           );
+
+        return {
+          ok: true,
+
+          status:
+            response.status,
+
+          statusText:
+            response.statusText,
+
+          elapsedMs:
+            Date.now() - started
+        };
+      } catch (error) {
+        return {
+          ok: false,
+
+          error:
+            error?.message ||
+            String(error),
+
+          code:
+            error?.cause?.code ||
+            null,
+
+          cause:
+            error?.cause?.message ||
+            null,
+
+          elapsedMs:
+            Date.now() - started
+        };
       }
-    } catch (error) {
-      result.authError =
-        error?.message ||
-        String(error);
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * Test OpenSky authentication host
+     * ----------------------------------------------------------
+     */
+
+    result.tests.authHost =
+      await testUrl(
+        "https://auth.opensky-network.org"
+      );
+
+    /*
+     * ----------------------------------------------------------
+     * Test OpenSky API host
+     * ----------------------------------------------------------
+     *
+     * This is intentionally only a connectivity test.
+     * It does not send credentials.
+     */
+
+    result.tests.apiHost =
+      await testUrl(
+        "https://opensky-network.org/api/states/all"
+      );
+
+    /*
+     * ----------------------------------------------------------
+     * OAuth test
+     * ----------------------------------------------------------
+     */
+
+    if (
+      result.hasClientId &&
+      result.hasClientSecret
+    ) {
+      result.oauth.attempted = true;
+
+      try {
+        const body =
+          new URLSearchParams({
+            grant_type:
+              "client_credentials",
+
+            client_id:
+              process.env
+                .OPENSKY_CLIENT_ID,
+
+            client_secret:
+              process.env
+                .OPENSKY_CLIENT_SECRET
+          });
+
+        const response =
+          await fetch(
+            "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/x-www-form-urlencoded",
+
+                Accept:
+                  "application/json",
+
+                "User-Agent":
+                  "WorldView-Godseye/1.0"
+              },
+
+              body:
+                body.toString(),
+
+              signal:
+                AbortSignal.timeout(
+                  15_000
+                )
+            }
+          );
+
+        result.oauth.reachable =
+          true;
+
+        result.oauth.status =
+          response.status;
+
+        const text =
+          await response.text();
+
+        /*
+         * Parse response without exposing the token.
+         */
+        try {
+          const data =
+            JSON.parse(text);
+
+          result.oauth.tokenReceived =
+            Boolean(
+              data.access_token
+            );
+
+          result.oauth.expiresIn =
+            data.expires_in ??
+            null;
+
+          result.oauth.error =
+            data.error ??
+            null;
+
+          result.oauth.errorDescription =
+            data.error_description ??
+            null;
+        } catch {
+          result.oauth.errorMessage =
+            text.slice(
+              0,
+              300
+            );
+        }
+      } catch (error) {
+        result.oauth.errorMessage =
+          error?.message ||
+          String(error);
+
+        result.oauth.errorCode =
+          error?.cause?.code ||
+          null;
+
+        result.oauth.errorCause =
+          error?.cause?.message ||
+          null;
+      }
+    } else {
+      result.oauth.errorMessage =
+        "OPENSKY_CLIENT_ID and/or OPENSKY_CLIENT_SECRET is missing";
     }
 
     res.json(result);
@@ -239,7 +339,9 @@ app.get(
       }
 
       const result =
-        await geocode(query);
+        await geocode(
+          query
+        );
 
       res.json(result);
     } catch (error) {
@@ -465,8 +567,10 @@ app.get(
               return {
                 name,
                 norad,
-                TLE_LINE1: tle1,
-                TLE_LINE2: tle2
+                TLE_LINE1:
+                  tle1,
+                TLE_LINE2:
+                  tle2
               };
             }
           )
@@ -528,75 +632,96 @@ app.get(
           Date.now()
         );
 
-      let catalog =
+      const cacheKey =
+        `satellite-positions:${group}:${Math.floor(
+          timestamp / 30_000
+        )}`;
+
+      let value =
         cache.get(
-          `satellite-catalog:${group}`
+          cacheKey
         );
 
-      if (!catalog) {
-        catalog =
-          await satellites(
-            group
+      if (!value) {
+        let catalog =
+          cache.get(
+            `satellite-catalog:${group}`
           );
 
+        if (!catalog) {
+          catalog =
+            await satellites(
+              group
+            );
+
+          cache.set(
+            `satellite-catalog:${group}`,
+            catalog,
+            30 * 60 * 1000
+          );
+        }
+
+        const rows =
+          (
+            Array.isArray(
+              catalog
+            )
+              ? catalog
+              : []
+          )
+            .map(
+              (record) => {
+                try {
+                  const position =
+                    propagate(
+                      record,
+                      timestamp
+                    );
+
+                  if (!position) {
+                    return null;
+                  }
+
+                  return {
+                    name:
+                      record.OBJECT_NAME ||
+                      record.OBJECT_NAME_EN ||
+                      record.NAME ||
+                      "Satellite",
+
+                    norad:
+                      record.NORAD_CAT_ID ||
+                      record.OBJECT_ID ||
+                      "",
+
+                    ...position
+                  };
+                } catch {
+                  return null;
+                }
+              }
+            )
+            .filter(Boolean);
+
+        value = {
+          time:
+            new Date(
+              timestamp
+            ).toISOString(),
+
+          group,
+
+          rows
+        };
+
         cache.set(
-          `satellite-catalog:${group}`,
-          catalog,
-          30 * 60 * 1000
+          cacheKey,
+          value,
+          30_000
         );
       }
 
-      const rows =
-        (
-          Array.isArray(
-            catalog
-          )
-            ? catalog
-            : []
-        )
-          .map(
-            (record) => {
-              try {
-                const position =
-                  propagate(
-                    record,
-                    timestamp
-                  );
-
-                if (!position) {
-                  return null;
-                }
-
-                return {
-                  name:
-                    record.OBJECT_NAME ||
-                    record.OBJECT_NAME_EN ||
-                    "Satellite",
-
-                  norad:
-                    record.NORAD_CAT_ID ||
-                    record.OBJECT_ID ||
-                    "",
-
-                  ...position
-                };
-              } catch {
-                return null;
-              }
-            }
-          )
-          .filter(Boolean);
-
-      res.json({
-        time:
-          new Date(
-            timestamp
-          ).toISOString(),
-
-        group,
-
-        rows
-      });
+      res.json(value);
     } catch (error) {
       console.error(
         "Satellite position error:",
@@ -762,7 +887,6 @@ app.get(
     res.json({
       server: {
         status: "ONLINE",
-
         time:
           new Date().toISOString()
       },
@@ -777,14 +901,16 @@ app.get(
 
         flights: {
           source: "OpenSky",
-          kind: "live/rate-limited",
+          kind:
+            "live/rate-limited",
           endpoint:
             "/api/data/flights"
         },
 
         satellites: {
           source: "CelesTrak",
-          kind: "orbital-elements",
+          kind:
+            "orbital-elements",
           endpoint:
             "/api/data/satellite-catalog"
         },
