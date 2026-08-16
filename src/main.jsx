@@ -5,7 +5,11 @@ import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
 import { config, earthquakes, flights, geocode } from "./data/api";
-import { addEarthquakes, addFlights, clear } from "./cesium/World";
+import {
+  addEarthquakes,
+  addFlights,
+  clear
+} from "./cesium/World";
 import { addSatelliteRows } from "./cesium/Satellites";
 
 import Timeline from "./components/Timeline";
@@ -18,26 +22,26 @@ const MIN = Date.parse("2026-08-16T08:00:00Z");
 const MAX = Date.parse("2026-08-16T14:00:00Z");
 
 function App() {
-  const el = useRef(null);
-  const vref = useRef(null);
+  const globeElement = useRef(null);
+  const viewerRef = useRef(null);
 
   const [token, setToken] = useState("");
   const [ready, setReady] = useState(false);
 
-  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
 
-  const [eq, setEq] = useState();
-  const [air, setAir] = useState();
-  const [sat, setSat] = useState();
+  const [earthquakeData, setEarthquakeData] = useState(null);
+  const [aircraftData, setAircraftData] = useState(null);
+  const [satelliteData, setSatelliteData] = useState(null);
 
-  const [events, setEvents] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [replayEvents, setReplayEvents] = useState([]);
+  const [selectedObject, setSelectedObject] = useState(null);
 
   const [mode, setMode] = useState("replay");
 
-  const [time, setTime] = useState(MIN);
-  const [play, setPlay] = useState(false);
-  const [speed, setSpeed] = useState(15);
+  const [currentTime, setCurrentTime] = useState(MIN);
+  const [playing, setPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(15);
 
   const [layers, setLayers] = useState({
     eq: true,
@@ -53,31 +57,45 @@ function App() {
   });
 
   /*
-   * Load configuration and initial data.
+   * ------------------------------------------------------------
+   * LOAD INITIAL CONFIGURATION + DATA
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadInitialData() {
+      /*
+       * Load Cesium configuration
+       */
       try {
-        const cfg = await config();
+        const configuration = await config();
 
         if (!cancelled) {
-          setToken(cfg?.cesiumIonToken || "");
+          setToken(
+            configuration?.cesiumIonToken || ""
+          );
         }
       } catch (error) {
-        console.error("Failed to load WorldView configuration:", error);
+        console.error(
+          "WorldView configuration failed:",
+          error
+        );
 
         if (!cancelled) {
           setToken("");
         }
       }
 
+      /*
+       * Load earthquake data
+       */
       try {
         const data = await earthquakes();
 
         if (!cancelled) {
-          setEq(data);
+          setEarthquakeData(data);
 
           setSources((current) => ({
             ...current,
@@ -85,7 +103,10 @@ function App() {
           }));
         }
       } catch (error) {
-        console.error("USGS earthquake feed failed:", error);
+        console.warn(
+          "USGS earthquake feed unavailable:",
+          error
+        );
 
         if (!cancelled) {
           setSources((current) => ({
@@ -95,18 +116,34 @@ function App() {
         }
       }
 
+      /*
+       * Load replay scenario
+       */
       try {
-        const replayResponse = await fetch("/api/replay/demo");
+        const response = await fetch(
+          "/api/replay/demo"
+        );
 
-        if (replayResponse.ok) {
-          const replayData = await replayResponse.json();
+        if (!response.ok) {
+          throw new Error(
+            `Replay request failed: ${response.status}`
+          );
+        }
 
-          if (!cancelled) {
-            setEvents(replayData?.events || []);
-          }
+        const data = await response.json();
+
+        if (!cancelled) {
+          setReplayEvents(
+            Array.isArray(data?.events)
+              ? data.events
+              : []
+          );
         }
       } catch (error) {
-        console.warn("Replay data unavailable:", error);
+        console.warn(
+          "Replay data unavailable:",
+          error
+        );
       }
     }
 
@@ -118,18 +155,25 @@ function App() {
   }, []);
 
   /*
-   * Load aircraft only when enabled.
+   * ------------------------------------------------------------
+   * AIRCRAFT DATA
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
-    if (!layers.air) return;
+    if (!layers.air) {
+      return;
+    }
 
     let cancelled = false;
 
     flights()
       .then((data) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
 
-        setAir(data);
+        setAircraftData(data);
 
         setSources((current) => ({
           ...current,
@@ -137,7 +181,10 @@ function App() {
         }));
       })
       .catch((error) => {
-        console.warn("OpenSky aircraft feed unavailable:", error);
+        console.warn(
+          "OpenSky aircraft feed unavailable:",
+          error
+        );
 
         if (!cancelled) {
           setSources((current) => ({
@@ -153,25 +200,36 @@ function App() {
   }, [layers.air]);
 
   /*
-   * Load satellite positions only when enabled.
+   * ------------------------------------------------------------
+   * SATELLITE DATA
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
-    if (!layers.sat) return;
+    if (!layers.sat) {
+      return;
+    }
 
     let cancelled = false;
 
-    fetch("/api/data/satellite-positions?group=visual")
+    fetch(
+      "/api/data/satellite-positions?group=visual"
+    )
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Satellite request failed: ${response.status}`);
+          throw new Error(
+            `Satellite request failed: ${response.status}`
+          );
         }
 
         return response.json();
       })
       .then((data) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
 
-        setSat(data);
+        setSatelliteData(data);
 
         setSources((current) => ({
           ...current,
@@ -179,7 +237,10 @@ function App() {
         }));
       })
       .catch((error) => {
-        console.warn("CelesTrak satellite feed unavailable:", error);
+        console.warn(
+          "CelesTrak satellite feed unavailable:",
+          error
+        );
 
         if (!cancelled) {
           setSources((current) => ({
@@ -195,22 +256,26 @@ function App() {
   }, [layers.sat]);
 
   /*
-   * Cesium viewer lifecycle.
+   * ------------------------------------------------------------
+   * CESIUM VIEWER
    *
-   * IMPORTANT:
-   * The old implementation could destroy a viewer while another React
-   * effect was still trying to access it. This version carefully guards
-   * creation, destruction, and Ion failures.
+   * IMPORTANT FIX:
+   *
+   * Viewer.baseLayer MUST receive an ImageryLayer.
+   *
+   * It must NOT receive IonImageryProvider directly.
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
     let viewer = null;
     let cancelled = false;
 
-    async function bootCesium() {
+    async function initializeGlobe() {
       try {
         setReady(false);
 
-        if (!el.current) {
+        if (!globeElement.current) {
           return;
         }
 
@@ -222,29 +287,29 @@ function App() {
         }
 
         /*
-         * Safe fallback terrain.
-         */
-        let terrainProvider = new Cesium.EllipsoidTerrainProvider();
-
-        /*
-         * Safe fallback imagery.
-         */
-        let imageryProvider = null;
-
-        /*
-         * Try Cesium Ion terrain.
+         * --------------------------------------------------------
+         * TERRAIN
+         * --------------------------------------------------------
          *
-         * If it fails, DO NOT kill the entire application.
+         * Start with the safe ellipsoid fallback.
          */
+
+        let terrainProvider =
+          new Cesium.EllipsoidTerrainProvider();
+
         if (token) {
           try {
             terrainProvider =
-              await Cesium.CesiumTerrainProvider.fromIonAssetId(1);
+              await Cesium.CesiumTerrainProvider.fromIonAssetId(
+                1
+              );
 
-            console.info("Cesium Ion terrain loaded.");
+            console.info(
+              "WorldView: Cesium World Terrain loaded."
+            );
           } catch (error) {
             console.warn(
-              "Cesium Ion terrain unavailable. Using ellipsoid fallback.",
+              "WorldView: Cesium Ion terrain failed. Using ellipsoid fallback.",
               error
             );
 
@@ -254,93 +319,201 @@ function App() {
         }
 
         /*
-         * Try Cesium Ion imagery.
+         * --------------------------------------------------------
+         * IMAGERY
+         * --------------------------------------------------------
          *
-         * Again, failure should not destroy the globe.
+         * This is the critical fix.
+         *
+         * We create an ImageryLayer and give that to Viewer.
          */
+
+        let baseLayer = null;
+
         if (token) {
           try {
-            imageryProvider =
-              await Cesium.IonImageryProvider.fromAssetId(2);
+            /*
+             * IonImageryProvider
+             *        ↓
+             * ImageryLayer.fromProviderAsync()
+             *        ↓
+             * ImageryLayer
+             */
+            baseLayer =
+              await Cesium.ImageryLayer.fromProviderAsync(
+                Cesium.IonImageryProvider.fromAssetId(2)
+              );
 
-            console.info("Cesium Ion imagery loaded.");
+            console.info(
+              "WorldView: Cesium Ion World Imagery loaded."
+            );
           } catch (error) {
             console.warn(
-              "Cesium Ion imagery unavailable. Using globe fallback.",
+              "WorldView: Cesium Ion imagery failed. Falling back to OpenStreetMap.",
               error
             );
-
-            imageryProvider = null;
           }
         }
 
         /*
-         * React may have unmounted while the async Ion requests were
-         * completing.
+         * If Ion imagery failed or there is no Ion token,
+         * create a real ImageryLayer using OSM.
+         *
+         * This is NOT passed directly to Viewer.
          */
-        if (cancelled || !el.current) {
+        if (!baseLayer) {
+          try {
+            const osmProvider =
+              new Cesium.UrlTemplateImageryProvider({
+                url:
+                  "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+
+                credit:
+                  "© OpenStreetMap contributors",
+
+                maximumLevel: 19
+              });
+
+            baseLayer =
+              new Cesium.ImageryLayer(
+                osmProvider
+              );
+
+            console.info(
+              "WorldView: OpenStreetMap imagery fallback loaded."
+            );
+          } catch (error) {
+            console.warn(
+              "WorldView: OSM imagery fallback failed:",
+              error
+            );
+
+            baseLayer = null;
+          }
+        }
+
+        /*
+         * React may have unmounted while the async
+         * terrain/imagery requests were running.
+         */
+        if (
+          cancelled ||
+          !globeElement.current
+        ) {
           return;
         }
 
         /*
-         * Create the actual viewer only after terrain/imagery resolution.
+         * --------------------------------------------------------
+         * CREATE CESIUM VIEWER
+         * --------------------------------------------------------
          */
-        viewer = new Cesium.Viewer(el.current, {
-          animation: false,
 
-          baseLayer: imageryProvider || undefined,
-          baseLayerPicker: false,
+        viewer = new Cesium.Viewer(
+          globeElement.current,
+          {
+            animation: false,
 
-          geocoder: false,
-          homeButton: false,
-          sceneModePicker: false,
+            /*
+             * IMPORTANT:
+             *
+             * baseLayer is now a REAL ImageryLayer.
+             */
+            baseLayer:
+              baseLayer || false,
 
-          timeline: false,
-          infoBox: false,
-          selectionIndicator: false,
+            baseLayerPicker: false,
 
-          terrainProvider,
+            geocoder: false,
 
-          shouldAnimate: true
-        });
+            homeButton: false,
+
+            sceneModePicker: false,
+
+            timeline: false,
+
+            infoBox: false,
+
+            selectionIndicator: false,
+
+            terrainProvider,
+
+            shouldAnimate: true
+          }
+        );
 
         /*
-         * Visual settings.
+         * --------------------------------------------------------
+         * VISUAL SETTINGS
+         * --------------------------------------------------------
          */
-        viewer.scene.globe.enableLighting = true;
-        viewer.scene.skyAtmosphere.show = true;
-        viewer.scene.fog.enabled = true;
-        viewer.scene.postProcessStages.fxaa.enabled = true;
+
+        viewer.scene.globe.enableLighting =
+          true;
+
+        viewer.scene.skyAtmosphere.show =
+          true;
+
+        viewer.scene.fog.enabled =
+          true;
+
+        viewer.scene.postProcessStages
+          .fxaa.enabled = true;
 
         /*
-         * Initial camera position.
+         * Make the Earth visually immersive.
          */
+
+        viewer.scene.globe.showGroundAtmosphere =
+          true;
+
+        /*
+         * --------------------------------------------------------
+         * INITIAL CAMERA
+         * --------------------------------------------------------
+         */
+
         viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(
-            44,
-            28,
-            16_500_000
-          ),
+          destination:
+            Cesium.Cartesian3.fromDegrees(
+              44,
+              28,
+              16_500_000
+            ),
+
           duration: 2
         });
 
         /*
-         * Globe click handler.
+         * --------------------------------------------------------
+         * OBJECT CLICK HANDLER
+         * --------------------------------------------------------
          */
+
         viewer.screenSpaceEventHandler.setInputAction(
           (click) => {
-            if (!viewer || viewer.isDestroyed()) {
+            if (
+              !viewer ||
+              viewer.isDestroyed()
+            ) {
               return;
             }
 
             try {
-              const picked = viewer.scene.pick(click.position);
+              const picked =
+                viewer.scene.pick(
+                  click.position
+                );
 
-              if (!picked || !picked.id) {
+              if (
+                !picked ||
+                !picked.id
+              ) {
                 return;
               }
 
-              const properties = picked.id.properties;
+              const properties =
+                picked.id.properties;
 
               if (!properties) {
                 return;
@@ -348,24 +521,44 @@ function App() {
 
               const object = {};
 
-              for (const propertyName of properties.propertyNames) {
+              for (
+                const propertyName of
+                  properties.propertyNames
+              ) {
                 object[propertyName] =
-                  properties.getValue(viewer.clock.currentTime);
+                  properties.getValue(
+                    viewer.clock.currentTime
+                  );
               }
 
-              setSelected(object);
+              setSelectedObject(
+                object
+              );
             } catch (error) {
-              console.warn("Object selection failed:", error);
+              console.warn(
+                "WorldView object selection failed:",
+                error
+              );
             }
           },
-          Cesium.ScreenSpaceEventType.LEFT_CLICK
+          Cesium.ScreenSpaceEventType
+            .LEFT_CLICK
         );
 
         /*
-         * Store only a valid viewer.
+         * --------------------------------------------------------
+         * STORE ACTIVE VIEWER
+         * --------------------------------------------------------
          */
-        if (!cancelled && !viewer.isDestroyed()) {
-          vref.current = viewer;
+
+        if (
+          !cancelled &&
+          viewer &&
+          !viewer.isDestroyed()
+        ) {
+          viewerRef.current =
+            viewer;
+
           setReady(true);
         }
       } catch (error) {
@@ -374,17 +567,18 @@ function App() {
           error
         );
 
-        /*
-         * Never leave a broken viewer reference behind.
-         */
-        vref.current = null;
+        viewerRef.current =
+          null;
 
-        if (viewer && !viewer.isDestroyed()) {
+        if (
+          viewer &&
+          !viewer.isDestroyed()
+        ) {
           try {
             viewer.destroy();
           } catch (destroyError) {
             console.warn(
-              "Failed to destroy broken Cesium viewer:",
+              "Cesium cleanup failed:",
               destroyError
             );
           }
@@ -398,29 +592,43 @@ function App() {
       }
     }
 
-    bootCesium();
+    initializeGlobe();
 
     /*
-     * Cleanup.
+     * --------------------------------------------------------
+     * CLEANUP
+     * --------------------------------------------------------
      */
+
     return () => {
       cancelled = true;
 
       setReady(false);
 
+      const activeViewer =
+        viewerRef.current;
+
       /*
-       * Clear the ref BEFORE destroying the viewer so another React
-       * effect cannot accidentally use a stale viewer.
+       * Clear the ref BEFORE destroying
+       * the viewer.
+       *
+       * This prevents another React effect
+       * from using a stale Cesium instance.
        */
-      const currentViewer = vref.current;
+      viewerRef.current =
+        null;
 
-      vref.current = null;
-
-      if (currentViewer && !currentViewer.isDestroyed()) {
+      if (
+        activeViewer &&
+        !activeViewer.isDestroyed()
+      ) {
         try {
-          currentViewer.destroy();
+          activeViewer.destroy();
         } catch (error) {
-          console.warn("Cesium cleanup error:", error);
+          console.warn(
+            "WorldView viewer cleanup failed:",
+            error
+          );
         }
       }
 
@@ -429,36 +637,54 @@ function App() {
   }, [token]);
 
   /*
-   * 4D playback clock.
+   * ------------------------------------------------------------
+   * 4D PLAYBACK CLOCK
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
-    if (!play || mode !== "replay") {
+    if (
+      !playing ||
+      mode !== "replay"
+    ) {
       return;
     }
 
-    const timer = setInterval(() => {
-      setTime((currentTime) => {
-        const nextTime = currentTime + 1000 * speed;
+    const timer =
+      setInterval(() => {
+        setCurrentTime(
+          (time) => {
+            const next =
+              time +
+              1000 *
+                playbackSpeed;
 
-        if (nextTime >= MAX) {
-          return MIN;
-        }
+            if (next >= MAX) {
+              return MIN;
+            }
 
-        return nextTime;
-      });
-    }, 1000);
+            return next;
+          }
+        );
+      }, 1000);
 
-    return () => clearInterval(timer);
-  }, [play, speed, mode]);
+    return () =>
+      clearInterval(timer);
+  }, [
+    playing,
+    playbackSpeed,
+    mode
+  ]);
 
   /*
-   * Render layers into the currently active Cesium viewer.
-   *
-   * IMPORTANT:
-   * This verifies that the viewer still exists before accessing entities.
+   * ------------------------------------------------------------
+   * RENDER WORLD LAYERS
+   * ------------------------------------------------------------
    */
+
   useEffect(() => {
-    const viewer = vref.current;
+    const viewer =
+      viewerRef.current;
 
     if (!viewer) {
       return;
@@ -468,73 +694,158 @@ function App() {
       return;
     }
 
-    if (viewer.isDestroyed()) {
+    if (
+      typeof viewer.isDestroyed ===
+        "function" &&
+      viewer.isDestroyed()
+    ) {
       return;
     }
 
     try {
+      /*
+       * Safely clear existing entities.
+       */
       clear(viewer);
 
       /*
+       * --------------------------------------------------------
        * LIVE MODE
+       * --------------------------------------------------------
        */
+
       if (mode === "live") {
         if (layers.eq) {
-          addEarthquakes(viewer, eq);
+          addEarthquakes(
+            viewer,
+            earthquakeData
+          );
         }
 
         if (layers.air) {
-          addFlights(viewer, air);
+          addFlights(
+            viewer,
+            aircraftData
+          );
         }
 
         if (layers.sat) {
-          addSatelliteRows(viewer, sat?.rows);
+          addSatelliteRows(
+            viewer,
+            satelliteData?.rows
+          );
         }
 
         return;
       }
 
       /*
+       * --------------------------------------------------------
        * REPLAY MODE
+       * --------------------------------------------------------
        */
-      if (mode === "replay" && layers.replay) {
-        const activeEvents = events.filter(
-          (event) => Date.parse(event.time) <= time
-        );
 
-        for (const event of activeEvents) {
-          if (viewer.isDestroyed()) {
+      if (
+        mode === "replay" &&
+        layers.replay
+      ) {
+        const activeEvents =
+          replayEvents.filter(
+            (event) =>
+              Date.parse(
+                event.time
+              ) <= currentTime
+          );
+
+        for (
+          const event of activeEvents
+        ) {
+          if (
+            viewer.isDestroyed()
+          ) {
             return;
           }
 
+          const latitude =
+            Number(event.lat);
+
+          const longitude =
+            Number(event.lon);
+
+          if (
+            !Number.isFinite(
+              latitude
+            ) ||
+            !Number.isFinite(
+              longitude
+            )
+          ) {
+            continue;
+          }
+
+          let color =
+            Cesium.Color.CYAN;
+
+          if (
+            event.kind ===
+            "incident"
+          ) {
+            color =
+              Cesium.Color.RED;
+          } else if (
+            event.kind ===
+            "airspace"
+          ) {
+            color =
+              Cesium.Color.YELLOW;
+          } else if (
+            event.kind ===
+            "maritime"
+          ) {
+            color =
+              Cesium.Color.BLUE;
+          } else if (
+            event.kind ===
+            "satellite"
+          ) {
+            color =
+              Cesium.Color.YELLOW;
+          }
+
           viewer.entities.add({
-            position: Cesium.Cartesian3.fromDegrees(
-              Number(event.lon),
-              Number(event.lat),
-              0
-            ),
+            position:
+              Cesium.Cartesian3.fromDegrees(
+                longitude,
+                latitude,
+                0
+              ),
 
             point: {
               pixelSize: 10,
 
-              color:
-                event.kind === "incident"
-                  ? Cesium.Color.RED
-                  : event.kind === "airspace"
-                  ? Cesium.Color.YELLOW
-                  : Cesium.Color.CYAN,
+              color,
 
-              outlineColor: Cesium.Color.WHITE,
+              outlineColor:
+                Cesium.Color.WHITE,
+
               outlineWidth: 1
             },
 
-            properties: new Cesium.PropertyBag({
-              type: event.kind,
-              title: event.title,
-              time: event.time,
-              latitude: event.lat,
-              longitude: event.lon
-            })
+            properties:
+              new Cesium.PropertyBag({
+                type:
+                  event.kind,
+
+                title:
+                  event.title,
+
+                time:
+                  event.time,
+
+                latitude,
+
+                longitude
+              })
           });
         }
       }
@@ -548,59 +859,108 @@ function App() {
     ready,
     mode,
     layers,
-    eq,
-    air,
-    sat,
-    events,
-    time
+    earthquakeData,
+    aircraftData,
+    satelliteData,
+    replayEvents,
+    currentTime
   ]);
 
   /*
-   * Location search.
+   * ------------------------------------------------------------
+   * SEARCH
+   * ------------------------------------------------------------
    */
-  async function search() {
-    if (!q.trim()) {
+
+  async function searchWorld() {
+    if (!query.trim()) {
       return;
     }
 
     try {
-      const results = await geocode(q);
+      const results =
+        await geocode(
+          query.trim()
+        );
 
-      const result = results?.[0];
+      const result =
+        results?.[0];
 
-      const viewer = vref.current;
+      const viewer =
+        viewerRef.current;
 
-      if (!result || !viewer || viewer.isDestroyed()) {
+      if (
+        !result ||
+        !viewer ||
+        viewer.isDestroyed()
+      ) {
+        return;
+      }
+
+      const longitude =
+        Number(result.lon);
+
+      const latitude =
+        Number(result.lat);
+
+      if (
+        !Number.isFinite(
+          longitude
+        ) ||
+        !Number.isFinite(
+          latitude
+        )
+      ) {
         return;
       }
 
       viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(
-          Number(result.lon),
-          Number(result.lat),
-          260_000
-        ),
+        destination:
+          Cesium.Cartesian3.fromDegrees(
+            longitude,
+            latitude,
+            260_000
+          ),
+
         duration: 2
       });
     } catch (error) {
-      console.warn("Location search failed:", error);
+      console.warn(
+        "WorldView search failed:",
+        error
+      );
     }
   }
 
+  /*
+   * ------------------------------------------------------------
+   * UI
+   * ------------------------------------------------------------
+   */
+
   return (
     <div className="app">
-      <div className="globe" ref={el} />
+      <div
+        className="globe"
+        ref={globeElement}
+      />
 
       <div className="scanline" />
 
       <header>
         <div className="brand">
-          <div className="mark">◎</div>
+          <div className="mark">
+            ◎
+          </div>
 
           <div>
-            <div className="logo">WORLDVIEW</div>
+            <div className="logo">
+              WORLDVIEW
+            </div>
+
             <div className="tag">
-              LIVE OPEN-SOURCE SPATIAL INTELLIGENCE
+              LIVE OPEN-SOURCE
+              SPATIAL INTELLIGENCE
             </div>
           </div>
         </div>
@@ -609,35 +969,54 @@ function App() {
           <span>⌕</span>
 
           <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
+            value={query}
+            onChange={(event) =>
+              setQuery(
+                event.target.value
+              )
+            }
             onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                search();
+              if (
+                event.key ===
+                "Enter"
+              ) {
+                searchWorld();
               }
             }}
             placeholder="Search the world…"
           />
 
-          <button onClick={search}>
+          <button
+            onClick={searchWorld}
+          >
             GO
           </button>
         </div>
 
         <div className="live">
-          {ready ? "● LIVE" : "◌ BOOTING"}
+          {ready
+            ? "● LIVE"
+            : "◌ BOOTING"}
         </div>
       </header>
 
       <nav className="rail">
-        <button>☰</button>
+        <button>
+          ☰
+        </button>
 
         <button
           onClick={() => {
-            const viewer = vref.current;
+            const viewer =
+              viewerRef.current;
 
-            if (viewer && !viewer.isDestroyed()) {
-              viewer.camera.flyHome(1.5);
+            if (
+              viewer &&
+              !viewer.isDestroyed()
+            ) {
+              viewer.camera.flyHome(
+                1.5
+              );
             }
           }}
         >
@@ -646,12 +1025,17 @@ function App() {
 
         <button
           onClick={() => {
-            setMode((current) =>
-              current === "live" ? "replay" : "live"
+            setMode(
+              (current) =>
+                current === "live"
+                  ? "replay"
+                  : "live"
             );
           }}
         >
-          {mode === "live" ? "4D" : "LIVE"}
+          {mode === "live"
+            ? "4D"
+            : "LIVE"}
         </button>
       </nav>
 
@@ -683,26 +1067,47 @@ function App() {
             ["eq", "EARTHQUAKES"],
             ["air", "AIRCRAFT"],
             ["sat", "SATELLITES"],
-            ["replay", "REPLAY EVENTS"]
-          ].map(([key, label]) => (
-            <label key={key}>
-              <span>{label}</span>
+            [
+              "replay",
+              "REPLAY EVENTS"
+            ]
+          ].map(
+            ([key, label]) => (
+              <label
+                key={key}
+              >
+                <span>
+                  {label}
+                </span>
 
-              <input
-                type="checkbox"
-                checked={layers[key]}
-                onChange={(event) => {
-                  setLayers((current) => ({
-                    ...current,
-                    [key]: event.target.checked
-                  }));
-                }}
-              />
-            </label>
-          ))}
+                <input
+                  type="checkbox"
+                  checked={
+                    layers[key]
+                  }
+                  onChange={(
+                    event
+                  ) => {
+                    setLayers(
+                      (current) => ({
+                        ...current,
+
+                        [key]:
+                          event
+                            .target
+                            .checked
+                      })
+                    );
+                  }}
+                />
+              </label>
+            )
+          )}
         </div>
 
-        <SourceStatus health={sources} />
+        <SourceStatus
+          health={sources}
+        />
       </aside>
 
       <div className="top-right">
@@ -713,11 +1118,17 @@ function App() {
 
           <b>
             {mode === "replay"
-              ? events.filter(
+              ? replayEvents.filter(
                   (event) =>
-                    Date.parse(event.time) <= time
+                    Date.parse(
+                      event.time
+                    ) <=
+                    currentTime
                 ).length
-              : eq?.features?.length ?? 0}
+              : earthquakeData
+                  ?.features
+                  ?.length ??
+                0}
           </b>
 
           <span>
@@ -727,30 +1138,46 @@ function App() {
         </div>
       </div>
 
-      {selected && (
+      {selectedObject && (
         <Inspector
-          selected={selected}
-          onClose={() => setSelected(null)}
+          selected={
+            selectedObject
+          }
+          onClose={() =>
+            setSelectedObject(
+              null
+            )
+          }
         />
       )}
 
       <Timeline
         open={true}
-        playing={play}
-        setPlaying={setPlay}
-        time={time}
-        setTime={setTime}
+        playing={playing}
+        setPlaying={
+          setPlaying
+        }
+        time={currentTime}
+        setTime={
+          setCurrentTime
+        }
         min={MIN}
         max={MAX}
-        speed={speed}
-        setSpeed={setSpeed}
+        speed={
+          playbackSpeed
+        }
+        setSpeed={
+          setPlaybackSpeed
+        }
         mode={mode}
         setMode={setMode}
       />
 
       <div className="footer">
         <span>
-          WORLDVIEW / GOD'S-EYE-STYLE OPEN SOURCE BUILD
+          WORLDVIEW /
+          GOD'S-EYE-STYLE
+          OPEN SOURCE BUILD
         </span>
 
         <span>
@@ -762,5 +1189,9 @@ function App() {
 }
 
 createRoot(
-  document.getElementById("root")
-).render(<App />);
+  document.getElementById(
+    "root"
+  )
+).render(
+  <App />
+);
