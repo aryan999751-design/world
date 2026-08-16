@@ -72,6 +72,155 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
+| TEMPORARY OPENSKY DIAGNOSTIC
+|--------------------------------------------------------------------------
+|
+| This endpoint checks:
+| 1. Whether Render has the client ID
+| 2. Whether Render has the client secret
+| 3. Whether Render can reach the OpenSky OAuth server
+| 4. What HTTP status OpenSky returns
+|
+| It NEVER returns the actual client secret or access token.
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/debug/opensky",
+  async (_req, res) => {
+    const result = {
+      hasClientId:
+        Boolean(
+          process.env.OPENSKY_CLIENT_ID
+        ),
+
+      hasClientSecret:
+        Boolean(
+          process.env.OPENSKY_CLIENT_SECRET
+        ),
+
+      authReachable: false,
+
+      authStatus: null,
+
+      authResponsePreview: null,
+
+      authError: null
+    };
+
+    try {
+      /*
+       * Protect against a missing environment variable.
+       */
+      if (
+        !process.env.OPENSKY_CLIENT_ID ||
+        !process.env.OPENSKY_CLIENT_SECRET
+      ) {
+        result.authError =
+          "OpenSky environment variables are missing";
+
+        return res.json(result);
+      }
+
+      /*
+       * OpenSky OAuth2 client-credentials request.
+       */
+      const body =
+        new URLSearchParams({
+          grant_type:
+            "client_credentials",
+
+          client_id:
+            process.env.OPENSKY_CLIENT_ID,
+
+          client_secret:
+            process.env.OPENSKY_CLIENT_SECRET
+        });
+
+      const response =
+        await fetch(
+          "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/x-www-form-urlencoded",
+
+              Accept:
+                "application/json"
+            },
+
+            body:
+              body.toString(),
+
+            signal:
+              AbortSignal.timeout(
+                15_000
+              )
+          }
+        );
+
+      result.authReachable =
+        true;
+
+      result.authStatus =
+        response.status;
+
+      const text =
+        await response.text();
+
+      /*
+       * NEVER return an actual OAuth access token.
+       *
+       * Only return a small diagnostic preview.
+       */
+      try {
+        const parsed =
+          JSON.parse(text);
+
+        result.authResponsePreview =
+          {
+            tokenReceived:
+              Boolean(
+                parsed.access_token
+              ),
+
+            expiresIn:
+              parsed.expires_in ??
+              null,
+
+            tokenType:
+              parsed.token_type ??
+              null,
+
+            error:
+              parsed.error ??
+              null,
+
+            errorDescription:
+              parsed.error_description ??
+              null
+          };
+      } catch {
+        result.authResponsePreview =
+          text.slice(
+            0,
+            300
+          );
+      }
+    } catch (error) {
+      result.authError =
+        error?.message ||
+        String(error);
+    }
+
+    res.json(result);
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | GEOCODING
 |--------------------------------------------------------------------------
 */
@@ -171,9 +320,6 @@ app.get(
 |--------------------------------------------------------------------------
 | AIRCRAFT
 |--------------------------------------------------------------------------
-|
-| OpenSky is rate-limited. We cache snapshots briefly.
-|--------------------------------------------------------------------------
 */
 
 app.get(
@@ -189,10 +335,7 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| SATELLITE ORBITAL CATALOG
-|--------------------------------------------------------------------------
-|
-| This is the raw orbital-element source used by satellite.js.
+| SATELLITE CATALOG
 |--------------------------------------------------------------------------
 */
 
@@ -209,30 +352,23 @@ app.get(
       const cacheKey =
         `satellites:${group}`;
 
-      const value =
-        await (async () => {
-          let cached =
-            cache.get(
-              cacheKey
-            );
+      let value =
+        cache.get(
+          cacheKey
+        );
 
-          if (cached) {
-            return cached;
-          }
-
-          const catalog =
-            await satellites(
-              group
-            );
-
-          cache.set(
-            cacheKey,
-            catalog,
-            30 * 60 * 1000
+      if (!value) {
+        value =
+          await satellites(
+            group
           );
 
-          return catalog;
-        })();
+        cache.set(
+          cacheKey,
+          value,
+          30 * 60 * 1000
+        );
+      }
 
       res.json(value);
     } catch (error) {
@@ -253,12 +389,6 @@ app.get(
 /*
 |--------------------------------------------------------------------------
 | NORMALIZED SATELLITE CATALOG
-|--------------------------------------------------------------------------
-|
-| Used by the frontend live-orbit renderer.
-|
-| It returns TLE/GP information rather than one static position.
-| satellite.js then continuously propagates those elements in the browser.
 |--------------------------------------------------------------------------
 */
 
@@ -294,48 +424,52 @@ app.get(
       }
 
       const rows =
-        (Array.isArray(catalog)
-          ? catalog
-          : []
+        (
+          Array.isArray(
+            catalog
+          )
+            ? catalog
+            : []
         )
-          .map((record) => {
-            const name =
-              record.OBJECT_NAME ||
-              record.OBJECT_NAME_EN ||
-              record.NAME ||
-              record.name ||
-              "Satellite";
+          .map(
+            (record) => {
+              const name =
+                record.OBJECT_NAME ||
+                record.OBJECT_NAME_EN ||
+                record.NAME ||
+                record.name ||
+                "Satellite";
 
-            const norad =
-              String(
-                record.NORAD_CAT_ID ||
-                record.NORAD_CAT_ID ||
-                record.OBJECT_ID ||
-                record.norad ||
-                name
-              );
+              const norad =
+                String(
+                  record.NORAD_CAT_ID ||
+                  record.OBJECT_ID ||
+                  record.norad ||
+                  name
+                );
 
-            const tle1 =
-              record.TLE_LINE1 ||
-              record.LINE1 ||
-              record.tle1 ||
-              record.TLE1 ||
-              "";
+              const tle1 =
+                record.TLE_LINE1 ||
+                record.LINE1 ||
+                record.tle1 ||
+                record.TLE1 ||
+                "";
 
-            const tle2 =
-              record.TLE_LINE2 ||
-              record.LINE2 ||
-              record.tle2 ||
-              record.TLE2 ||
-              "";
+              const tle2 =
+                record.TLE_LINE2 ||
+                record.LINE2 ||
+                record.tle2 ||
+                record.TLE2 ||
+                "";
 
-            return {
-              name,
-              norad,
-              TLE_LINE1: tle1,
-              TLE_LINE2: tle2
-            };
-          })
+              return {
+                name,
+                norad,
+                TLE_LINE1: tle1,
+                TLE_LINE2: tle2
+              };
+            }
+          )
           .filter(
             (record) =>
               record.TLE_LINE1 &&
@@ -376,11 +510,6 @@ app.get(
 |--------------------------------------------------------------------------
 | SATELLITE POSITION SNAPSHOT
 |--------------------------------------------------------------------------
-|
-| Keeps your original endpoint.
-|
-| Useful for debugging, APIs, and non-animated clients.
-|--------------------------------------------------------------------------
 */
 
 app.get(
@@ -399,95 +528,75 @@ app.get(
           Date.now()
         );
 
-      const cacheKey =
-        `satellite-positions:${group}:${Math.floor(
-          timestamp / 30_000
-        )}`;
-
-      let value =
+      let catalog =
         cache.get(
-          cacheKey
+          `satellite-catalog:${group}`
         );
 
-      if (!value) {
-        let catalog =
-          cache.get(
-            `satellite-catalog:${group}`
+      if (!catalog) {
+        catalog =
+          await satellites(
+            group
           );
-
-        if (!catalog) {
-          catalog =
-            await satellites(
-              group
-            );
-
-          cache.set(
-            `satellite-catalog:${group}`,
-            catalog,
-            30 * 60 * 1000
-          );
-        }
-
-        const rows =
-          (Array.isArray(catalog)
-            ? catalog
-            : []
-          )
-            .map(
-              (record) => {
-                try {
-                  const position =
-                    propagate(
-                      record,
-                      timestamp
-                    );
-
-                  if (
-                    !position
-                  ) {
-                    return null;
-                  }
-
-                  return {
-                    name:
-                      record.OBJECT_NAME ||
-                      record.OBJECT_NAME_EN ||
-                      record.NAME ||
-                      "Satellite",
-
-                    norad:
-                      record.NORAD_CAT_ID ||
-                      record.OBJECT_ID ||
-                      "",
-
-                    ...position
-                  };
-                } catch {
-                  return null;
-                }
-              }
-            )
-            .filter(Boolean);
-
-        value = {
-          time:
-            new Date(
-              timestamp
-            ).toISOString(),
-
-          group,
-
-          rows
-        };
 
         cache.set(
-          cacheKey,
-          value,
-          30_000
+          `satellite-catalog:${group}`,
+          catalog,
+          30 * 60 * 1000
         );
       }
 
-      res.json(value);
+      const rows =
+        (
+          Array.isArray(
+            catalog
+          )
+            ? catalog
+            : []
+        )
+          .map(
+            (record) => {
+              try {
+                const position =
+                  propagate(
+                    record,
+                    timestamp
+                  );
+
+                if (!position) {
+                  return null;
+                }
+
+                return {
+                  name:
+                    record.OBJECT_NAME ||
+                    record.OBJECT_NAME_EN ||
+                    "Satellite",
+
+                  norad:
+                    record.NORAD_CAT_ID ||
+                    record.OBJECT_ID ||
+                    "",
+
+                  ...position
+                };
+              } catch {
+                return null;
+              }
+            }
+          )
+          .filter(Boolean);
+
+      res.json({
+        time:
+          new Date(
+            timestamp
+          ).toISOString(),
+
+        group,
+
+        rows
+      });
     } catch (error) {
       console.error(
         "Satellite position error:",
@@ -505,7 +614,7 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| REPLAY SYSTEM
+| REPLAY
 |--------------------------------------------------------------------------
 */
 
@@ -653,6 +762,7 @@ app.get(
     res.json({
       server: {
         status: "ONLINE",
+
         time:
           new Date().toISOString()
       },
@@ -689,8 +799,10 @@ app.get(
         },
 
         replay: {
-          source: "WorldView Replay Engine",
-          kind: "historical/synthetic depending on dataset",
+          source:
+            "WorldView Replay Engine",
+          kind:
+            "historical/synthetic depending on dataset",
           endpoint:
             "/api/replay/:id"
         }
@@ -701,7 +813,7 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| FRONTEND STATIC FILES
+| STATIC FRONTEND
 |--------------------------------------------------------------------------
 */
 
@@ -724,9 +836,6 @@ app.use(
 /*
 |--------------------------------------------------------------------------
 | SPA FALLBACK
-|--------------------------------------------------------------------------
-|
-| Express 5 syntax.
 |--------------------------------------------------------------------------
 */
 
