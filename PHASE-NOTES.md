@@ -1,7 +1,19 @@
-# Phase 2 — Live data streams
+# Phase 5 — Final command-center build
 
-Adds normalized live data adapters for USGS earthquakes, OpenSky aircraft and CelesTrak satellites, plus source-status UI and a data refresh loop.
+This is the cumulative final phase.
 
-The browser receives normalized objects from the backend instead of calling feeds directly.
+Includes the full architecture:
+- immersive Cesium globe
+- live USGS earthquakes
+- OpenSky aircraft
+- CelesTrak satellite catalog + SGP4 positions
+- 4D replay timeline
+- event correlation API
+- GeoJSON provenance model
+- optional AIS adapter
+- source-status panel
+- command-center UI
+- AOI / event inspector
+- Render Web Service deployment
 
-OpenSky access should use OAuth2 for programmatic use; anonymous access is rate-limited. CelesTrak GP data is available as JSON and other formats. USGS provides GeoJSON feeds.
+The final layer system is designed so additional verified data providers can be plugged into `server/adapters.js` without changing the Cesium rendering engine.
