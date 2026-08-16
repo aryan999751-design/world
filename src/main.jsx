@@ -1,101 +1,178 @@
-import React, { useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
-import * as Cesium from "cesium";
+import React, {
+  useEffect,
+  useRef,
+  useState
+} from "react";
+
+import {
+  createRoot
+} from "react-dom/client";
+
+import * as Cesium
+  from "cesium";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
-import { config, earthquakes, flights, geocode } from "./data/api";
 import {
-  addEarthquakes,
-  addFlights,
-  clear
-} from "./cesium/World";
-import { addSatelliteRows } from "./cesium/Satellites";
+  config,
+  earthquakes,
+  flights,
+  geocode
+} from "./data/api";
 
-import Timeline from "./components/Timeline";
-import Inspector from "./components/Inspector";
-import SourceStatus from "./components/SourceStatus";
+import {
+  addEarthquakes
+} from "./cesium/World";
+
+import {
+  addAircraft,
+  removeMissingAircraft
+} from "./cesium/Aircraft";
+
+import {
+  addLiveSatellites,
+  removeMissingSatellites
+} from "./cesium/Satellites";
+
+import Timeline
+  from "./components/Timeline";
+
+import Inspector
+  from "./components/Inspector";
+
+import SourceStatus
+  from "./components/SourceStatus";
 
 import "./styles.css";
 
-const MIN = Date.parse("2026-08-16T08:00:00Z");
-const MAX = Date.parse("2026-08-16T14:00:00Z");
+const MIN =
+  Date.parse(
+    "2026-08-16T08:00:00Z"
+  );
+
+const MAX =
+  Date.parse(
+    "2026-08-16T14:00:00Z"
+  );
 
 function App() {
-  const globeElement = useRef(null);
-  const viewerRef = useRef(null);
+  const globeElement =
+    useRef(null);
 
-  const [token, setToken] = useState("");
-  const [ready, setReady] = useState(false);
-
-  const [query, setQuery] = useState("");
-
-  const [earthquakeData, setEarthquakeData] = useState(null);
-  const [aircraftData, setAircraftData] = useState(null);
-  const [satelliteData, setSatelliteData] = useState(null);
-
-  const [replayEvents, setReplayEvents] = useState([]);
-  const [selectedObject, setSelectedObject] = useState(null);
-
-  const [mode, setMode] = useState("replay");
-
-  const [currentTime, setCurrentTime] = useState(MIN);
-  const [playing, setPlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(15);
-
-  const [layers, setLayers] = useState({
-    eq: true,
-    air: false,
-    sat: true,
-    replay: true
-  });
-
-  const [sources, setSources] = useState({
-    USGS: "LOADING",
-    OpenSky: "STANDBY",
-    CelesTrak: "LOADING"
-  });
+  const viewerRef =
+    useRef(null);
 
   /*
-   * ------------------------------------------------------------
-   * LOAD INITIAL CONFIGURATION + DATA
-   * ------------------------------------------------------------
+   * Live entity registries.
+   */
+  const aircraftEntities =
+    useRef(new Map());
+
+  const satelliteEntities =
+    useRef(new Map());
+
+  const [token, setToken] =
+    useState("");
+
+  const [ready, setReady] =
+    useState(false);
+
+  const [query, setQuery] =
+    useState("");
+
+  const [
+    earthquakeData,
+    setEarthquakeData
+  ] = useState(null);
+
+  const [
+    aircraftData,
+    setAircraftData
+  ] = useState(null);
+
+  const [
+    satelliteCatalog,
+    setSatelliteCatalog
+  ] = useState([]);
+
+  const [
+    replayEvents,
+    setReplayEvents
+  ] = useState([]);
+
+  const [
+    selectedObject,
+    setSelectedObject
+  ] = useState(null);
+
+  const [mode, setMode] =
+    useState("live");
+
+  const [
+    currentTime,
+    setCurrentTime
+  ] = useState(MIN);
+
+  const [
+    playing,
+    setPlaying
+  ] = useState(false);
+
+  const [
+    playbackSpeed,
+    setPlaybackSpeed
+  ] = useState(15);
+
+  const [layers, setLayers] =
+    useState({
+      eq: true,
+      air: true,
+      sat: true,
+      replay: false
+    });
+
+  const [sources, setSources] =
+    useState({
+      USGS: "LOADING",
+      OpenSky: "LOADING",
+      CelesTrak: "LOADING"
+    });
+
+  /*
+   * ============================================================
+   * INITIAL CONFIG
+   * ============================================================
    */
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadInitialData() {
-      /*
-       * Load Cesium configuration
-       */
+    async function load() {
       try {
-        const configuration = await config();
+        const configuration =
+          await config();
 
         if (!cancelled) {
           setToken(
-            configuration?.cesiumIonToken || ""
+            configuration?.cesiumIonToken ||
+              ""
           );
         }
       } catch (error) {
-        console.error(
-          "WorldView configuration failed:",
+        console.warn(
+          "Config failed:",
           error
         );
-
-        if (!cancelled) {
-          setToken("");
-        }
       }
 
-      /*
-       * Load earthquake data
-       */
       try {
-        const data = await earthquakes();
+        const data =
+          await earthquakes();
 
         if (!cancelled) {
-          setEarthquakeData(data);
+          setEarthquakeData(
+            data
+          );
 
           setSources((current) => ({
             ...current,
@@ -103,51 +180,32 @@ function App() {
           }));
         }
       } catch (error) {
-        console.warn(
-          "USGS earthquake feed unavailable:",
-          error
-        );
-
-        if (!cancelled) {
-          setSources((current) => ({
-            ...current,
-            USGS: "ERROR"
-          }));
-        }
+        setSources((current) => ({
+          ...current,
+          USGS: "ERROR"
+        }));
       }
 
-      /*
-       * Load replay scenario
-       */
       try {
-        const response = await fetch(
-          "/api/replay/demo"
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `Replay request failed: ${response.status}`
+        const response =
+          await fetch(
+            "/api/replay/demo"
           );
-        }
 
-        const data = await response.json();
+        if (response.ok) {
+          const data =
+            await response.json();
 
-        if (!cancelled) {
-          setReplayEvents(
-            Array.isArray(data?.events)
-              ? data.events
-              : []
-          );
+          if (!cancelled) {
+            setReplayEvents(
+              data?.events || []
+            );
+          }
         }
-      } catch (error) {
-        console.warn(
-          "Replay data unavailable:",
-          error
-        );
-      }
+      } catch {}
     }
 
-    loadInitialData();
+    load();
 
     return () => {
       cancelled = true;
@@ -155,123 +213,16 @@ function App() {
   }, []);
 
   /*
-   * ------------------------------------------------------------
-   * AIRCRAFT DATA
-   * ------------------------------------------------------------
-   */
-
-  useEffect(() => {
-    if (!layers.air) {
-      return;
-    }
-
-    let cancelled = false;
-
-    flights()
-      .then((data) => {
-        if (cancelled) {
-          return;
-        }
-
-        setAircraftData(data);
-
-        setSources((current) => ({
-          ...current,
-          OpenSky: "ONLINE"
-        }));
-      })
-      .catch((error) => {
-        console.warn(
-          "OpenSky aircraft feed unavailable:",
-          error
-        );
-
-        if (!cancelled) {
-          setSources((current) => ({
-            ...current,
-            OpenSky: "RATE LIMITED"
-          }));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [layers.air]);
-
-  /*
-   * ------------------------------------------------------------
-   * SATELLITE DATA
-   * ------------------------------------------------------------
-   */
-
-  useEffect(() => {
-    if (!layers.sat) {
-      return;
-    }
-
-    let cancelled = false;
-
-    fetch(
-      "/api/data/satellite-positions?group=visual"
-    )
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(
-            `Satellite request failed: ${response.status}`
-          );
-        }
-
-        return response.json();
-      })
-      .then((data) => {
-        if (cancelled) {
-          return;
-        }
-
-        setSatelliteData(data);
-
-        setSources((current) => ({
-          ...current,
-          CelesTrak: "ONLINE"
-        }));
-      })
-      .catch((error) => {
-        console.warn(
-          "CelesTrak satellite feed unavailable:",
-          error
-        );
-
-        if (!cancelled) {
-          setSources((current) => ({
-            ...current,
-            CelesTrak: "ERROR"
-          }));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [layers.sat]);
-
-  /*
-   * ------------------------------------------------------------
-   * CESIUM VIEWER
-   *
-   * IMPORTANT FIX:
-   *
-   * Viewer.baseLayer MUST receive an ImageryLayer.
-   *
-   * It must NOT receive IonImageryProvider directly.
-   * ------------------------------------------------------------
+   * ============================================================
+   * CESIUM
+   * ============================================================
    */
 
   useEffect(() => {
     let viewer = null;
     let cancelled = false;
 
-    async function initializeGlobe() {
+    async function initialize() {
       try {
         setReady(false);
 
@@ -279,19 +230,13 @@ function App() {
           return;
         }
 
-        /*
-         * Configure Cesium Ion when a token exists.
-         */
         if (token) {
-          Cesium.Ion.defaultAccessToken = token;
+          Cesium.Ion.defaultAccessToken =
+            token;
         }
 
         /*
-         * --------------------------------------------------------
-         * TERRAIN
-         * --------------------------------------------------------
-         *
-         * Start with the safe ellipsoid fallback.
+         * Terrain.
          */
 
         let terrainProvider =
@@ -303,99 +248,64 @@ function App() {
               await Cesium.CesiumTerrainProvider.fromIonAssetId(
                 1
               );
-
-            console.info(
-              "WorldView: Cesium World Terrain loaded."
-            );
           } catch (error) {
             console.warn(
-              "WorldView: Cesium Ion terrain failed. Using ellipsoid fallback.",
+              "Ion terrain unavailable:",
               error
             );
-
-            terrainProvider =
-              new Cesium.EllipsoidTerrainProvider();
           }
         }
 
         /*
-         * --------------------------------------------------------
-         * IMAGERY
-         * --------------------------------------------------------
+         * Imagery.
          *
-         * This is the critical fix.
-         *
-         * We create an ImageryLayer and give that to Viewer.
+         * IMPORTANT: baseLayer must be an ImageryLayer.
          */
 
         let baseLayer = null;
 
         if (token) {
           try {
-            /*
-             * IonImageryProvider
-             *        ↓
-             * ImageryLayer.fromProviderAsync()
-             *        ↓
-             * ImageryLayer
-             */
             baseLayer =
               await Cesium.ImageryLayer.fromProviderAsync(
-                Cesium.IonImageryProvider.fromAssetId(2)
+                Cesium.IonImageryProvider.fromAssetId(
+                  2
+                )
               );
-
-            console.info(
-              "WorldView: Cesium Ion World Imagery loaded."
-            );
           } catch (error) {
             console.warn(
-              "WorldView: Cesium Ion imagery failed. Falling back to OpenStreetMap.",
+              "Ion imagery unavailable:",
               error
             );
           }
         }
 
         /*
-         * If Ion imagery failed or there is no Ion token,
-         * create a real ImageryLayer using OSM.
-         *
-         * This is NOT passed directly to Viewer.
+         * Fallback imagery.
          */
+
         if (!baseLayer) {
           try {
             const osmProvider =
-              new Cesium.UrlTemplateImageryProvider({
-                url:
-                  "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+              new Cesium.UrlTemplateImageryProvider(
+                {
+                  url:
+                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 
-                credit:
-                  "© OpenStreetMap contributors",
+                  credit:
+                    "© OpenStreetMap contributors",
 
-                maximumLevel: 19
-              });
+                  maximumLevel: 19
+                }
+              );
 
             baseLayer =
               new Cesium.ImageryLayer(
                 osmProvider
               );
-
-            console.info(
-              "WorldView: OpenStreetMap imagery fallback loaded."
-            );
-          } catch (error) {
-            console.warn(
-              "WorldView: OSM imagery fallback failed:",
-              error
-            );
-
-            baseLayer = null;
-          }
+          } catch {}
         }
 
-        /*
-         * React may have unmounted while the async
-         * terrain/imagery requests were running.
-         */
         if (
           cancelled ||
           !globeElement.current
@@ -403,49 +313,45 @@ function App() {
           return;
         }
 
-        /*
-         * --------------------------------------------------------
-         * CREATE CESIUM VIEWER
-         * --------------------------------------------------------
-         */
+        viewer =
+          new Cesium.Viewer(
+            globeElement.current,
+            {
+              animation: false,
 
-        viewer = new Cesium.Viewer(
-          globeElement.current,
-          {
-            animation: false,
+              baseLayer:
+                baseLayer || false,
 
-            /*
-             * IMPORTANT:
-             *
-             * baseLayer is now a REAL ImageryLayer.
-             */
-            baseLayer:
-              baseLayer || false,
+              baseLayerPicker:
+                false,
 
-            baseLayerPicker: false,
+              geocoder:
+                false,
 
-            geocoder: false,
+              homeButton:
+                false,
 
-            homeButton: false,
+              sceneModePicker:
+                false,
 
-            sceneModePicker: false,
+              timeline:
+                false,
 
-            timeline: false,
+              infoBox:
+                false,
 
-            infoBox: false,
+              selectionIndicator:
+                false,
 
-            selectionIndicator: false,
+              terrainProvider,
 
-            terrainProvider,
-
-            shouldAnimate: true
-          }
-        );
+              shouldAnimate:
+                true
+            }
+          );
 
         /*
-         * --------------------------------------------------------
-         * VISUAL SETTINGS
-         * --------------------------------------------------------
+         * Visual atmosphere.
          */
 
         viewer.scene.globe.enableLighting =
@@ -460,17 +366,11 @@ function App() {
         viewer.scene.postProcessStages
           .fxaa.enabled = true;
 
-        /*
-         * Make the Earth visually immersive.
-         */
-
         viewer.scene.globe.showGroundAtmosphere =
           true;
 
         /*
-         * --------------------------------------------------------
-         * INITIAL CAMERA
-         * --------------------------------------------------------
+         * Start camera.
          */
 
         viewer.camera.flyTo({
@@ -485,161 +385,569 @@ function App() {
         });
 
         /*
-         * --------------------------------------------------------
-         * OBJECT CLICK HANDLER
-         * --------------------------------------------------------
+         * Object selection.
          */
 
-        viewer.screenSpaceEventHandler.setInputAction(
-          (click) => {
-            if (
-              !viewer ||
-              viewer.isDestroyed()
-            ) {
-              return;
-            }
-
-            try {
-              const picked =
-                viewer.scene.pick(
-                  click.position
-                );
-
+        viewer.screenSpaceEventHandler
+          .setInputAction(
+            (click) => {
               if (
-                !picked ||
-                !picked.id
+                viewer.isDestroyed()
               ) {
                 return;
               }
 
-              const properties =
-                picked.id.properties;
-
-              if (!properties) {
-                return;
-              }
-
-              const object = {};
-
-              for (
-                const propertyName of
-                  properties.propertyNames
-              ) {
-                object[propertyName] =
-                  properties.getValue(
-                    viewer.clock.currentTime
+              try {
+                const picked =
+                  viewer.scene.pick(
+                    click.position
                   );
-              }
 
-              setSelectedObject(
-                object
-              );
-            } catch (error) {
-              console.warn(
-                "WorldView object selection failed:",
-                error
-              );
-            }
-          },
-          Cesium.ScreenSpaceEventType
-            .LEFT_CLICK
+                if (
+                  !picked ||
+                  !picked.id
+                ) {
+                  return;
+                }
+
+                const properties =
+                  picked.id.properties;
+
+                if (!properties) {
+                  return;
+                }
+
+                const object = {};
+
+                for (
+                  const propertyName of
+                    properties.propertyNames
+                ) {
+                  object[propertyName] =
+                    properties.getValue(
+                      viewer.clock.currentTime
+                    );
+                }
+
+                setSelectedObject(
+                  object
+                );
+              } catch {}
+            },
+            Cesium.ScreenSpaceEventType
+              .LEFT_CLICK
+          );
+
+        viewerRef.current =
+          viewer;
+
+        setReady(true);
+      } catch (error) {
+        console.error(
+          "Cesium initialization failed:",
+          error
         );
 
-        /*
-         * --------------------------------------------------------
-         * STORE ACTIVE VIEWER
-         * --------------------------------------------------------
-         */
-
         if (
-          !cancelled &&
           viewer &&
           !viewer.isDestroyed()
         ) {
-          viewerRef.current =
-            viewer;
-
-          setReady(true);
+          viewer.destroy();
         }
-      } catch (error) {
-        console.error(
-          "WorldView Cesium initialization failed:",
-          error
-        );
 
         viewerRef.current =
           null;
 
-        if (
-          viewer &&
-          !viewer.isDestroyed()
-        ) {
-          try {
-            viewer.destroy();
-          } catch (destroyError) {
-            console.warn(
-              "Cesium cleanup failed:",
-              destroyError
-            );
-          }
-        }
-
-        viewer = null;
-
-        if (!cancelled) {
-          setReady(false);
-        }
+        setReady(false);
       }
     }
 
-    initializeGlobe();
-
-    /*
-     * --------------------------------------------------------
-     * CLEANUP
-     * --------------------------------------------------------
-     */
+    initialize();
 
     return () => {
       cancelled = true;
 
-      setReady(false);
-
-      const activeViewer =
+      const oldViewer =
         viewerRef.current;
 
-      /*
-       * Clear the ref BEFORE destroying
-       * the viewer.
-       *
-       * This prevents another React effect
-       * from using a stale Cesium instance.
-       */
-      viewerRef.current =
-        null;
+      viewerRef.current = null;
 
       if (
-        activeViewer &&
-        !activeViewer.isDestroyed()
+        oldViewer &&
+        !oldViewer.isDestroyed()
       ) {
-        try {
-          activeViewer.destroy();
-        } catch (error) {
-          console.warn(
-            "WorldView viewer cleanup failed:",
-            error
-          );
-        }
+        oldViewer.destroy();
       }
 
-      viewer = null;
+      aircraftEntities.current.clear();
+      satelliteEntities.current.clear();
+
+      setReady(false);
     };
   }, [token]);
 
   /*
-   * ------------------------------------------------------------
-   * 4D PLAYBACK CLOCK
-   * ------------------------------------------------------------
+   * ============================================================
+   * LIVE AIRCRAFT POLLING
+   * ============================================================
+   *
+   * OpenSky snapshots are refreshed periodically.
+   * Aircraft.js interpolates movement between snapshots.
+   */
+
+  useEffect(() => {
+    if (!layers.air) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshAircraft() {
+      try {
+        const data =
+          await flights();
+
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        setAircraftData(
+          data
+        );
+
+        setSources((current) => ({
+          ...current,
+          OpenSky: "ONLINE"
+        }));
+      } catch (error) {
+        console.warn(
+          "Aircraft refresh failed:",
+          error
+        );
+
+        if (!cancelled) {
+          setSources((current) => ({
+            ...current,
+            OpenSky:
+              "RATE LIMITED"
+          }));
+        }
+      }
+    }
+
+    refreshAircraft();
+
+    /*
+     * Ten seconds is deliberately conservative.
+     * OpenSky applies API credits/rate limits.
+     */
+    const interval =
+      setInterval(
+        refreshAircraft,
+        10_000
+      );
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [layers.air]);
+
+  /*
+   * ============================================================
+   * LIVE SATELLITE CATALOG
+   * ============================================================
+   *
+   * We do NOT repeatedly download orbital elements.
+   *
+   * We download the current orbital elements and then
+   * satellite.js propagates each satellite continuously
+   * inside the browser.
+   */
+
+  useEffect(() => {
+    if (!layers.sat) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSatellites() {
+      try {
+        const response =
+          await fetch(
+            "/api/data/satellite-catalog?group=visual"
+          );
+
+        if (!response.ok) {
+          throw new Error(
+            `Satellite catalog failed: ${response.status}`
+          );
+        }
+
+        const data =
+          await response.json();
+
+        if (!cancelled) {
+          setSatelliteCatalog(
+            data?.rows || []
+          );
+
+          setSources((current) => ({
+            ...current,
+            CelesTrak: "ONLINE"
+          }));
+        }
+      } catch (error) {
+        console.warn(
+          "Satellite catalog failed:",
+          error
+        );
+
+        if (!cancelled) {
+          setSources((current) => ({
+            ...current,
+            CelesTrak: "ERROR"
+          }));
+        }
+      }
+    }
+
+    loadSatellites();
+
+    /*
+     * Refresh orbital elements every 30 minutes.
+     * The positions themselves continue moving every frame.
+     */
+    const interval =
+      setInterval(
+        loadSatellites,
+        30 * 60 * 1000
+      );
+
+    return () => {
+      cancelled = true;
+
+      clearInterval(
+        interval
+      );
+    };
+  }, [layers.sat]);
+
+  /*
+   * ============================================================
+   * INITIAL LIVE EARTHQUAKE REFRESH
+   * ============================================================
+   */
+
+  useEffect(() => {
+    if (!layers.eq) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshEarthquakes() {
+      try {
+        const data =
+          await earthquakes();
+
+        if (!cancelled) {
+          setEarthquakeData(
+            data
+          );
+        }
+      } catch {}
+    }
+
+    const interval =
+      setInterval(
+        refreshEarthquakes,
+        60_000
+      );
+
+    return () =>
+      clearInterval(
+        interval
+      );
+  }, [layers.eq]);
+
+  /*
+   * ============================================================
+   * RENDER LIVE EARTHQUAKES
+   * ============================================================
+   */
+
+  useEffect(() => {
+    const viewer =
+      viewerRef.current;
+
+    if (
+      !viewer ||
+      !ready ||
+      viewer.isDestroyed()
+    ) {
+      return;
+    }
+
+    /*
+     * Earthquakes are event markers, so refreshing them
+     * by rebuilding their layer is acceptable.
+     *
+     * Do NOT clear the whole entity collection here because
+     * aircraft and satellites are dynamic.
+     */
+
+    const oldEarthquakes =
+      viewer.entities.values
+        .filter(
+          (entity) =>
+            entity.__worldviewType ===
+            "earthquake"
+        );
+
+    for (
+      const entity of
+        oldEarthquakes
+    ) {
+      viewer.entities.remove(
+        entity
+      );
+    }
+
+    if (!layers.eq) {
+      return;
+    }
+
+    try {
+      const before =
+        viewer.entities.values.length;
+
+      addEarthquakes(
+        viewer,
+        earthquakeData
+      );
+
+      /*
+       * Tag the newly created entities.
+       */
+
+      const created =
+        viewer.entities.values.slice(
+          before
+        );
+
+      for (
+        const entity of
+          created
+      ) {
+        entity.__worldviewType =
+          "earthquake";
+      }
+    } catch (error) {
+      console.warn(
+        "Earthquake render failed:",
+        error
+      );
+    }
+  }, [
+    earthquakeData,
+    layers.eq,
+    ready
+  ]);
+
+  /*
+   * ============================================================
+   * DYNAMIC AIRCRAFT
+   * ============================================================
+   */
+
+  useEffect(() => {
+    const viewer =
+      viewerRef.current;
+
+    if (
+      !viewer ||
+      !ready ||
+      viewer.isDestroyed()
+    ) {
+      return;
+    }
+
+    if (!layers.air) {
+      for (
+        const entity of
+          aircraftEntities.current.values()
+      ) {
+        viewer.entities.remove(
+          entity
+        );
+      }
+
+      aircraftEntities.current.clear();
+
+      return;
+    }
+
+    if (!aircraftData) {
+      return;
+    }
+
+    const states =
+      (aircraftData.states ||
+        [])
+        .filter(Boolean)
+        .map(
+          (state) => ({
+            icao24:
+              state[0],
+
+            callsign:
+              state[1],
+
+            country:
+              state[2],
+
+            longitude:
+              state[5],
+
+            latitude:
+              state[6],
+
+            altitude:
+              state[7],
+
+            onGround:
+              state[8],
+
+            velocity:
+              state[9],
+
+            heading:
+              state[10],
+
+            verticalRate:
+              state[11]
+          })
+        )
+        .filter(
+          (aircraft) =>
+            !aircraft.onGround &&
+            Number.isFinite(
+              Number(
+                aircraft.longitude
+              )
+            ) &&
+            Number.isFinite(
+              Number(
+                aircraft.latitude
+              )
+            )
+        );
+
+    const activeIds =
+      new Set(
+        states.map(
+          (aircraft) =>
+            aircraft.icao24
+        )
+      );
+
+    addAircraft(
+      viewer,
+      states,
+      aircraftEntities.current
+    );
+
+    removeMissingAircraft(
+      viewer,
+      aircraftEntities.current,
+      activeIds
+    );
+  }, [
+    aircraftData,
+    layers.air,
+    ready
+  ]);
+
+  /*
+   * ============================================================
+   * DYNAMIC SATELLITES
+   * ============================================================
+   */
+
+  useEffect(() => {
+    const viewer =
+      viewerRef.current;
+
+    if (
+      !viewer ||
+      !ready ||
+      viewer.isDestroyed()
+    ) {
+      return;
+    }
+
+    if (!layers.sat) {
+      for (
+        const entity of
+          satelliteEntities.current.values()
+      ) {
+        viewer.entities.remove(
+          entity
+        );
+      }
+
+      satelliteEntities.current.clear();
+
+      return;
+    }
+
+    if (
+      satelliteCatalog.length ===
+      0
+    ) {
+      return;
+    }
+
+    const activeIds =
+      new Set();
+
+    for (
+      const satellite of
+        satelliteCatalog
+    ) {
+      activeIds.add(
+        String(
+          satellite.norad ||
+          satellite.name
+        )
+      );
+    }
+
+    addLiveSatellites(
+      viewer,
+      satelliteCatalog,
+      satelliteEntities.current
+    );
+
+    removeMissingSatellites(
+      viewer,
+      satelliteEntities.current,
+      activeIds
+    );
+  }, [
+    satelliteCatalog,
+    layers.sat,
+    ready
+  ]);
+
+  /*
+   * ============================================================
+   * 4D REPLAY
+   * ============================================================
    */
 
   useEffect(() => {
@@ -659,7 +967,9 @@ function App() {
               1000 *
                 playbackSpeed;
 
-            if (next >= MAX) {
+            if (
+              next >= MAX
+            ) {
               return MIN;
             }
 
@@ -677,203 +987,153 @@ function App() {
   ]);
 
   /*
-   * ------------------------------------------------------------
-   * RENDER WORLD LAYERS
-   * ------------------------------------------------------------
+   * ============================================================
+   * REPLAY EVENTS
+   * ============================================================
    */
 
   useEffect(() => {
     const viewer =
       viewerRef.current;
 
-    if (!viewer) {
-      return;
-    }
-
-    if (!ready) {
-      return;
-    }
-
     if (
-      typeof viewer.isDestroyed ===
-        "function" &&
+      !viewer ||
+      !ready ||
       viewer.isDestroyed()
     ) {
       return;
     }
 
-    try {
-      /*
-       * Safely clear existing entities.
-       */
-      clear(viewer);
+    const replayEntities =
+      viewer.entities.values
+        .filter(
+          (entity) =>
+            entity.__worldviewType ===
+            "replay"
+        );
 
-      /*
-       * --------------------------------------------------------
-       * LIVE MODE
-       * --------------------------------------------------------
-       */
-
-      if (mode === "live") {
-        if (layers.eq) {
-          addEarthquakes(
-            viewer,
-            earthquakeData
-          );
-        }
-
-        if (layers.air) {
-          addFlights(
-            viewer,
-            aircraftData
-          );
-        }
-
-        if (layers.sat) {
-          addSatelliteRows(
-            viewer,
-            satelliteData?.rows
-          );
-        }
-
-        return;
-      }
-
-      /*
-       * --------------------------------------------------------
-       * REPLAY MODE
-       * --------------------------------------------------------
-       */
-
-      if (
-        mode === "replay" &&
-        layers.replay
-      ) {
-        const activeEvents =
-          replayEvents.filter(
-            (event) =>
-              Date.parse(
-                event.time
-              ) <= currentTime
-          );
-
-        for (
-          const event of activeEvents
-        ) {
-          if (
-            viewer.isDestroyed()
-          ) {
-            return;
-          }
-
-          const latitude =
-            Number(event.lat);
-
-          const longitude =
-            Number(event.lon);
-
-          if (
-            !Number.isFinite(
-              latitude
-            ) ||
-            !Number.isFinite(
-              longitude
-            )
-          ) {
-            continue;
-          }
-
-          let color =
-            Cesium.Color.CYAN;
-
-          if (
-            event.kind ===
-            "incident"
-          ) {
-            color =
-              Cesium.Color.RED;
-          } else if (
-            event.kind ===
-            "airspace"
-          ) {
-            color =
-              Cesium.Color.YELLOW;
-          } else if (
-            event.kind ===
-            "maritime"
-          ) {
-            color =
-              Cesium.Color.BLUE;
-          } else if (
-            event.kind ===
-            "satellite"
-          ) {
-            color =
-              Cesium.Color.YELLOW;
-          }
-
-          viewer.entities.add({
-            position:
-              Cesium.Cartesian3.fromDegrees(
-                longitude,
-                latitude,
-                0
-              ),
-
-            point: {
-              pixelSize: 10,
-
-              color,
-
-              outlineColor:
-                Cesium.Color.WHITE,
-
-              outlineWidth: 1
-            },
-
-            properties:
-              new Cesium.PropertyBag({
-                type:
-                  event.kind,
-
-                title:
-                  event.title,
-
-                time:
-                  event.time,
-
-                latitude,
-
-                longitude
-              })
-          });
-        }
-      }
-    } catch (error) {
-      console.error(
-        "WorldView layer rendering failed:",
-        error
+    for (
+      const entity of
+        replayEntities
+    ) {
+      viewer.entities.remove(
+        entity
       );
     }
+
+    if (
+      mode !== "replay" ||
+      !layers.replay
+    ) {
+      return;
+    }
+
+    const activeEvents =
+      replayEvents.filter(
+        (event) =>
+          Date.parse(
+            event.time
+          ) <= currentTime
+      );
+
+    for (
+      const event of
+        activeEvents
+    ) {
+      if (
+        !Number.isFinite(
+          Number(event.lat)
+        ) ||
+        !Number.isFinite(
+          Number(event.lon)
+        )
+      ) {
+        continue;
+      }
+
+      let color =
+        Cesium.Color.CYAN;
+
+      if (
+        event.kind ===
+        "incident"
+      ) {
+        color =
+          Cesium.Color.RED;
+      } else if (
+        event.kind ===
+        "airspace"
+      ) {
+        color =
+          Cesium.Color.YELLOW;
+      } else if (
+        event.kind ===
+        "maritime"
+      ) {
+        color =
+          Cesium.Color.BLUE;
+      }
+
+      const entity =
+        viewer.entities.add({
+          position:
+            Cesium.Cartesian3.fromDegrees(
+              Number(event.lon),
+              Number(event.lat),
+              0
+            ),
+
+          point: {
+            pixelSize: 10,
+
+            color,
+
+            outlineColor:
+              Cesium.Color.WHITE,
+
+            outlineWidth: 1
+          },
+
+          properties:
+            new Cesium.PropertyBag({
+              type:
+                event.kind,
+
+              title:
+                event.title,
+
+              time:
+                event.time,
+
+              latitude:
+                Number(event.lat),
+
+              longitude:
+                Number(event.lon)
+            })
+        });
+
+      entity.__worldviewType =
+        "replay";
+    }
   }, [
-    ready,
-    mode,
-    layers,
-    earthquakeData,
-    aircraftData,
-    satelliteData,
     replayEvents,
-    currentTime
+    currentTime,
+    mode,
+    layers.replay,
+    ready
   ]);
 
   /*
-   * ------------------------------------------------------------
+   * ============================================================
    * SEARCH
-   * ------------------------------------------------------------
+   * ============================================================
    */
 
   async function searchWorld() {
-    if (!query.trim()) {
+    if (
+      !query.trim()
+    ) {
       return;
     }
 
@@ -897,28 +1157,11 @@ function App() {
         return;
       }
 
-      const longitude =
-        Number(result.lon);
-
-      const latitude =
-        Number(result.lat);
-
-      if (
-        !Number.isFinite(
-          longitude
-        ) ||
-        !Number.isFinite(
-          latitude
-        )
-      ) {
-        return;
-      }
-
       viewer.camera.flyTo({
         destination:
           Cesium.Cartesian3.fromDegrees(
-            longitude,
-            latitude,
+            Number(result.lon),
+            Number(result.lat),
             260_000
           ),
 
@@ -926,20 +1169,21 @@ function App() {
       });
     } catch (error) {
       console.warn(
-        "WorldView search failed:",
+        "Search failed:",
         error
       );
     }
   }
 
   /*
-   * ------------------------------------------------------------
+   * ============================================================
    * UI
-   * ------------------------------------------------------------
+   * ============================================================
    */
 
   return (
     <div className="app">
+
       <div
         className="globe"
         ref={globeElement}
@@ -948,7 +1192,9 @@ function App() {
       <div className="scanline" />
 
       <header>
+
         <div className="brand">
+
           <div className="mark">
             ◎
           </div>
@@ -963,10 +1209,14 @@ function App() {
               SPATIAL INTELLIGENCE
             </div>
           </div>
+
         </div>
 
         <div className="search">
-          <span>⌕</span>
+
+          <span>
+            ⌕
+          </span>
 
           <input
             value={query}
@@ -987,10 +1237,13 @@ function App() {
           />
 
           <button
-            onClick={searchWorld}
+            onClick={
+              searchWorld
+            }
           >
             GO
           </button>
+
         </div>
 
         <div className="live">
@@ -998,9 +1251,11 @@ function App() {
             ? "● LIVE"
             : "◌ BOOTING"}
         </div>
+
       </header>
 
       <nav className="rail">
+
         <button>
           ☰
         </button>
@@ -1027,28 +1282,34 @@ function App() {
           onClick={() => {
             setMode(
               (current) =>
-                current === "live"
+                current ===
+                "live"
                   ? "replay"
                   : "live"
             );
           }}
         >
-          {mode === "live"
+          {mode ===
+          "live"
             ? "4D"
             : "LIVE"}
         </button>
+
       </nav>
 
       <aside className="stack">
+
         <div className="panel">
+
           <div className="k">
             WORLD STATUS
           </div>
 
           <h3>
-            {mode === "replay"
-              ? "4D REPLAY"
-              : "LIVE MONITOR"}
+            {mode ===
+            "live"
+              ? "LIVE MONITOR"
+              : "4D REPLAY"}
           </h3>
 
           <div className="sub">
@@ -1056,11 +1317,13 @@ function App() {
               ? "Cesium/WebGL online"
               : "Initializing globe"}
           </div>
+
         </div>
 
         <div className="panel">
+
           <div className="k">
-            LAYERS
+            LIVE LAYERS
           </div>
 
           {[
@@ -1076,6 +1339,7 @@ function App() {
               <label
                 key={key}
               >
+
                 <span>
                   {label}
                 </span>
@@ -1100,42 +1364,54 @@ function App() {
                     );
                   }}
                 />
+
               </label>
             )
           )}
+
         </div>
 
         <SourceStatus
           health={sources}
         />
+
       </aside>
 
       <div className="top-right">
+
         <div className="panel">
+
           <div className="k">
-            EVENTS
+            LIVE OBJECTS
           </div>
 
           <b>
-            {mode === "replay"
-              ? replayEvents.filter(
+            {mode ===
+            "live"
+              ?
+                aircraftEntities
+                  .current
+                  .size +
+                satelliteEntities
+                  .current
+                  .size
+              :
+                replayEvents.filter(
                   (event) =>
                     Date.parse(
                       event.time
                     ) <=
                     currentTime
-                ).length
-              : earthquakeData
-                  ?.features
-                  ?.length ??
-                0}
+                ).length}
           </b>
 
           <span>
             {" "}
-            ACTIVE OBJECTS
+            TRACKED
           </span>
+
         </div>
+
       </div>
 
       {selectedObject && (
@@ -1152,12 +1428,19 @@ function App() {
       )}
 
       <Timeline
-        open={true}
-        playing={playing}
+        open={
+          mode ===
+          "replay"
+        }
+        playing={
+          playing
+        }
         setPlaying={
           setPlaying
         }
-        time={currentTime}
+        time={
+          currentTime
+        }
         setTime={
           setCurrentTime
         }
@@ -1169,21 +1452,26 @@ function App() {
         setSpeed={
           setPlaybackSpeed
         }
-        mode={mode}
-        setMode={setMode}
+        mode={
+          mode
+        }
+        setMode={
+          setMode
+        }
       />
 
       <div className="footer">
+
         <span>
-          WORLDVIEW /
-          GOD'S-EYE-STYLE
-          OPEN SOURCE BUILD
+          WORLDVIEW / LIVE ORBITAL + AIR TRAFFIC
         </span>
 
         <span>
-          PHASE 5 / 5
+          CESIUM · OPENSKY · CELESTRAK
         </span>
+
       </div>
+
     </div>
   );
 }
