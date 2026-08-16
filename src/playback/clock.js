@@ -1,0 +1,1 @@
+export function usePlaybackState(){/* UI wrapper lives in React */}export function activeEvents(events,ms){return (events||[]).filter(e=>Date.parse(e.time)<=ms)}export function clampTime(ms,min,max){return Math.max(min,Math.min(max,ms))}

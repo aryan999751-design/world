@@ -1,0 +1,44 @@
+{
+  "id": "demo",
+  "title": "WorldView Demonstration Replay",
+  "start": "2026-08-16T08:00:00Z",
+  "end": "2026-08-16T14:00:00Z",
+  "events": [
+    {
+      "id": "e1",
+      "kind": "incident",
+      "title": "Sample Event Alpha",
+      "time": "2026-08-16T09:10:00Z",
+      "lat": 35.6892,
+      "lon": 51.389,
+      "magnitude": 4
+    },
+    {
+      "id": "e2",
+      "kind": "airspace",
+      "title": "Sample Airspace Change",
+      "time": "2026-08-16T10:20:00Z",
+      "lat": 35.0,
+      "lon": 51.7,
+      "radiusKm": 120
+    },
+    {
+      "id": "e3",
+      "kind": "maritime",
+      "title": "Sample Vessel Track",
+      "time": "2026-08-16T11:35:00Z",
+      "lat": 26.5,
+      "lon": 56.4,
+      "radiusKm": 35
+    },
+    {
+      "id": "e4",
+      "kind": "satellite",
+      "title": "Sample Satellite Pass",
+      "time": "2026-08-16T12:15:00Z",
+      "lat": 32.6,
+      "lon": 50.1,
+      "radiusKm": 160
+    }
+  ]
+}

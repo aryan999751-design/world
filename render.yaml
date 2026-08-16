@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: worldview-godseye
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: CESIUM_ION_TOKEN
+        sync: false
+      - key: OPENSKY_CLIENT_ID
+        sync: false
+      - key: OPENSKY_CLIENT_SECRET
+        sync: false
+      - key: AISSTREAM_API_KEY
+        sync: false

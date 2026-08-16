@@ -1,0 +1,1 @@
+Replay packs should use timestamped GeoJSON-like events. The included demo is synthetic and clearly labeled. Replace it with data you are licensed and authorized to use. Never present synthetic events as historical fact.

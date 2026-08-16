@@ -1,0 +1,2 @@
+import React from "react";
+export default function Inspector({selected,onClose}){if(!selected)return null;return <div className="inspector"><div className="k">OBJECT INSPECTOR</div><h2>{selected.title||selected.name||selected.type||"Object"}</h2>{Object.entries(selected).filter(([k])=>!["entity"].includes(k)).slice(0,12).map(([k,v])=><div className="ir" key={k}><span>{k}</span><b>{typeof v==="number"?v.toFixed(3):String(v)}</b></div>)}<button onClick={onClose}>CLOSE</button></div>}
